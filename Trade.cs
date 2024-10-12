@@ -9,8 +9,7 @@ using System.Linq;
 
 namespace Oxide.Plugins
 {
-    [Info ("Trade", "Calytic", "1.2.45")] // Hotfix on Line 999 for May 2023 Rust Update - Solarix
-    //Patched for October 2024 Update - Ralli
+    [Info ("Trade", "Calytic", "1.2.45")] // Fix for read only compilation failure OCT, 2024
     class Trade : RustPlugin
     {
         #region Configuration
@@ -31,30 +30,27 @@ namespace Oxide.Plugins
         #endregion
 
         #region Trade State
+
         class OnlinePlayer
         {
             public BasePlayer Player;
             public StorageContainer View;
             public OpenTrade Trade;
 
-            public PlayerInventory inventory
-            {
-                get
-                {
+            public PlayerInventory inventory {
+                get {
                     return Player.inventory;
                 }
             }
 
             public ItemContainer containerMain {
-                get 
-                {
+                get {
                     return Player.inventory.containerMain;
                 }
             }
 
             public OnlinePlayer (BasePlayer player)
             {
-                this.Player = player;  // Ensure the BasePlayer is assigned.
             }
 
             public void Clear ()
@@ -64,7 +60,6 @@ namespace Oxide.Plugins
             }
         }
 
-        [OnlinePlayers]
         Hash<BasePlayer, OnlinePlayer> onlinePlayers = new Hash<BasePlayer, OnlinePlayer> ();
 
         class OpenTrade
@@ -354,33 +349,22 @@ namespace Oxide.Plugins
         //    return null;
         //}
 
-        void OnPlayerConnected(BasePlayer player)
+        void OnPlayerConnected (BasePlayer player)
         {
-            if (!onlinePlayers.ContainsKey(player))
-            {
-                onlinePlayers[player] = new OnlinePlayer(player);  // Correctly initialize OnlinePlayer and add to dictionary.
-                PrintWarning($"Player added to onlinePlayers: {player.displayName}");
-            }
-
-            onlinePlayers[player].View = null;
-            onlinePlayers[player].Trade = null;
+            onlinePlayers [player].View = null;
+            onlinePlayers [player].Trade = null;
         }
 
-        void OnPlayerDisconnected(BasePlayer player)
+        void OnPlayerDisconnected (BasePlayer player)
         {
             OnlinePlayer onlinePlayer;
-            if (onlinePlayers.TryGetValue(player, out onlinePlayer))
-            {
-                if (onlinePlayer.Trade != null)
-                {
-                    TradeCloseBoxes(onlinePlayer.Trade);
-                }
-                else if (onlinePlayer.View != null)
-                {
-                    CloseBoxView(player, onlinePlayer.View);
+            if (onlinePlayers.TryGetValue (player, out onlinePlayer)) {
+                if (onlinePlayer.Trade != null) {
+                    TradeCloseBoxes (onlinePlayer.Trade);
+                } else if (onlinePlayer.View != null) {
+                    CloseBoxView (player, onlinePlayer.View);
                 }
             }
-            onlinePlayers.Remove(player);  // This line removes the player from the dictionary
         }
 
         void OnPlayerLootEnd (PlayerLoot inventory)
@@ -489,13 +473,6 @@ namespace Oxide.Plugins
         [ChatCommand ("trade")]
         void cmdTrade (BasePlayer player, string command, string [] args)
         {
-            if (!onlinePlayers.TryGetValue(player, out OnlinePlayer onlinePlayer))
-            {
-                PrintWarning($"Player not found in onlinePlayers: {player.displayName}");
-                SendReply(player, "You were not found in the trade system. Please try reconnecting.");
-                return;
-            }
-
             if (args.Length == 1) {
                 if (args [0] == "accept") {
                     if (!CanPlayerTrade (player, "trade.accept"))
@@ -976,13 +953,7 @@ namespace Oxide.Plugins
 
         void StartTrade (BasePlayer source, BasePlayer target, OpenTrade trade)
         {
-            if (!onlinePlayers.ContainsKey(source) || !onlinePlayers.ContainsKey(target))
-            {
-                SendReply(source, "Trade failed: one of the players was not found.");
-                return;
-            }
-
-            OpenBox(source, source);  // Only proceed if players are valid.
+            OpenBox (source, source);
 
             if (!openTrades.Contains (trade)) {
                 openTrades.Add (trade);
@@ -994,121 +965,110 @@ namespace Oxide.Plugins
 
         void OpenBox (BasePlayer player, BaseEntity target)
         {
-            if (player == null)
-            {
-                PrintWarning("Attempted to open a box for a null player.");
+            SubscribeAll ();
+            var ply = onlinePlayers [player];
+            if (ply.View == null) {
+                OpenBoxView (player, target);
                 return;
             }
 
-            // Handle case where player is missing from onlinePlayers
-            OnlinePlayer ply;
-            if (!onlinePlayers.TryGetValue(player, out ply))
-            {
-                PrintWarning($"Player not found in onlinePlayers: {player.displayName}");
-                // Optionally, try to re-add the player or notify them
-                SendReply(player, "Something went wrong with the trade system. Please reconnect to fix.");
-                return;
-            }
-
-            if (ply.View == null)
-            {
-                OpenBoxView(player, target);
-                return;
-            }
-
-            CloseBoxView(player, ply.View);
-            timer.In(1f, () => OpenBoxView(player, target));
+            CloseBoxView (player, ply.View);
+            timer.In (1f, () => OpenBoxView (player, target));
         }
 
-        void OpenBoxView (BasePlayer player, BaseEntity targArg)
-        {
-            var pos = new Vector3 (player.transform.position.x, player.transform.position.y - 1, player.transform.position.z);
-            var boxContainer = GameManager.server.CreateEntity (box, pos) as StorageContainer;
-            boxContainer.GetComponent<DestroyOnGroundMissing> ().enabled = false;
-            boxContainer.GetComponent<GroundWatch> ().enabled = false;
-            boxContainer.transform.position = pos;
+		void OpenBoxView(BasePlayer player, BaseEntity targArg)
+		{
+			var pos = new Vector3(player.transform.position.x, player.transform.position.y - 1, player.transform.position.z);
+			var boxContainer = GameManager.server.CreateEntity(box, pos) as StorageContainer;
+			if (boxContainer == null) return;
 
-            if (!boxContainer) return;
+			boxContainer.GetComponent<DestroyOnGroundMissing>().enabled = false;
+			boxContainer.GetComponent<GroundWatch>().enabled = false;
+			boxContainer.transform.position = pos;
 
-            StorageContainer view = boxContainer as StorageContainer;
-            view.limitNetworking = true;
-            player.EndLooting ();
-            if (targArg is BasePlayer) {
+			StorageContainer view = boxContainer;
+			view.limitNetworking = true;
+			player.EndLooting();
 
-                BasePlayer target = targArg as BasePlayer;
-                view.CreateInventory(true);
-                view.inventory.playerOwner = player;
-                view.inventory.ServerInitialize (null, slots);
+			if (targArg is BasePlayer)
+			{
+				BasePlayer target = targArg as BasePlayer;
 
-                view.enableSaving = false;
-                view.Spawn ();
+				var container = view.inventory;
+				if (container == null) return;
 
-                onlinePlayers [player].View = view;
-                timer.In (0.1f, () => view.PlayerOpenLoot (player));
-            }
-        }
+				container.capacity = slots;
+				container.playerOwner = player;
 
-        void CloseBoxView (BasePlayer player, StorageContainer view)
-        {
+				view.enableSaving = false;
+				view.Spawn();
 
-            OnlinePlayer onlinePlayer;
-            if (!onlinePlayers.TryGetValue (player, out onlinePlayer)) return;
-            if (onlinePlayer.View == null) return;
+				onlinePlayers[player].View = view;
 
-            HideTrade (player);
-            if (onlinePlayer.Trade != null) {
-                OpenTrade t = onlinePlayer.Trade;
-                t.closing = true;
+				timer.In(0.1f, () => view.PlayerOpenLoot(player));
+			}
+		}
 
-                if (t.sourcePlayer == player && t.targetPlayer != player && t.target.View != null) {
-                    t.target.Trade = null;
-                    CloseBoxView (t.targetPlayer, t.target.View);
-                } else if (t.targetPlayer == player && t.sourcePlayer != player && t.source.View != null) {
-                    t.source.Trade = null;
-                    CloseBoxView (t.sourcePlayer, t.source.View);
-                }
+		void CloseBoxView(BasePlayer player, StorageContainer view)
+		{
+			OnlinePlayer onlinePlayer;
+			if (!onlinePlayers.TryGetValue(player, out onlinePlayer)) return;
+			if (onlinePlayer.View == null) return;
 
-                if (openTrades.Contains (t)) {
-                    openTrades.Remove (t);
-                }
-            }
+			HideTrade(player);
+			if (onlinePlayer.Trade != null) {
+				OpenTrade t = onlinePlayer.Trade;
+				t.closing = true;
 
-            if (view.inventory.itemList.Count > 0) {
-                foreach (Item item in view.inventory.itemList.ToArray ()) {
-                    if (item.position != -1) {
-                        item.MoveToContainer (player.inventory.containerMain);
-                    }
-                }
-            }
+				if (t.sourcePlayer == player && t.targetPlayer != player && t.target.View != null) {
+					t.target.Trade = null;
+					CloseBoxView(t.targetPlayer, t.target.View);
+				} else if (t.targetPlayer == player && t.sourcePlayer != player && t.source.View != null) {
+					t.source.Trade = null;
+					CloseBoxView(t.sourcePlayer, t.source.View);
+				}
 
-            if (view.inventory.itemList.Count > 0) {
-                foreach (Item item in view.inventory.itemList.ToArray ()) {
-                    if (item.position != -1) {
-                        item.MoveToContainer (player.inventory.containerBelt);
-                    }
-                }
-            }
+				if (openTrades.Contains(t)) {
+					openTrades.Remove(t);
+				}
+			}
 
-            if (player.inventory.loot.entitySource != null) {
-                player.inventory.loot.Invoke ("SendUpdate", 0.1f);
-                view.SendMessage ("PlayerStoppedLooting", player, SendMessageOptions.DontRequireReceiver);
-                player.SendConsoleCommand ("inventory.endloot", null);
-            }
+			if (view.inventory.itemList.Count > 0) {
+				foreach (Item item in view.inventory.itemList.ToArray()) {
+					if (item.position != -1) {
+						item.MoveToContainer(player.inventory.containerMain);
+					}
+				}
+			}
 
-            player.inventory.loot.entitySource = null;
-            player.inventory.loot.itemSource = null;
-            player.inventory.loot.containers = new List<ItemContainer> ();
+			if (view.inventory.itemList.Count > 0) {
+				foreach (Item item in view.inventory.itemList.ToArray()) {
+					if (item.position != -1) {
+						item.MoveToContainer(player.inventory.containerBelt);
+					}
+				}
+			}
 
-            view.inventory.Clear();
+			if (player.inventory.loot.entitySource != null) {
+				player.inventory.loot.Invoke("SendUpdate", 0.1f);
+				view.SendMessage("PlayerStoppedLooting", player, SendMessageOptions.DontRequireReceiver);
+				player.SendConsoleCommand("inventory.endloot", null);
+			}
 
-            onlinePlayer.Clear ();
+			player.inventory.loot.entitySource = null;
+			player.inventory.loot.itemSource = null;
+			player.inventory.loot.containers = new List<ItemContainer>();
 
-            view.Kill (BaseNetworkable.DestroyMode.None);
+			// Here, instead of assigning a new ItemContainer, clear the existing one
+			view.inventory.Clear();
 
-            if (onlinePlayers.Values.Count (p => p.View != null) <= 0) {
-                UnsubscribeAll ();
-            }
-        }
+			onlinePlayer.Clear();
+			view.Kill(BaseNetworkable.DestroyMode.None);
+
+			if (onlinePlayers.Values.Count(p => p.View != null) <= 0) {
+				UnsubscribeAll();
+			}
+		}
 
         bool CanPlayerTrade (BasePlayer player, string perm)
         {
